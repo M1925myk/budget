@@ -155,6 +155,14 @@ export class Page {
       return { x, y };
     })()`);
     if (point.error) throw new Error(`Нажатие на ${selector}: ${point.error}`);
+    // Человек не нажимает второй раз в ту же точку быстрее полсекунды, а такое нажатие приложение
+    // считает случайным двойным касанием. Сценарии двойного касания шлют события напрямую.
+    this.recentClicks = (this.recentClicks ?? []).filter((c) => Date.now() - c.time < 550);
+    const nearby = this.recentClicks.filter((c) => Math.hypot(point.x - c.x, point.y - c.y) < 50);
+    if (nearby.length > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 550 - (Date.now() - nearby[0].time)));
+    }
+    this.recentClicks.push({ x: point.x, y: point.y, time: Date.now() });
     const base = { x: point.x, y: point.y, button: 'left', clickCount: 1 };
     await this.send('Input.dispatchMouseEvent', { ...base, type: 'mousePressed' });
     await this.send('Input.dispatchMouseEvent', { ...base, type: 'mouseReleased' });

@@ -31,12 +31,18 @@ setValue('#onb-amount', '660');
 check('подсказка на первом экране', money($('#onb-preview').textContent).includes('в день'));
 $('#onb-submit').click();
 await wait(50);
-const expected = Math.round((66000 * dayNumber) / daysInMonth);
+// По умолчанию учёт идёт с сегодняшнего дня, поэтому в первый день доступна одна доля.
+const expected = Math.round(66000 / (daysInMonth - dayNumber + 1));
 const shown = (cents) => `${String(Math.floor(cents / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')},${String(cents % 100).padStart(2, '0')} €`;
 check('лимит посчитан', money($('#hero-amount').textContent) === shown(expected), money($('#hero-amount').textContent));
 
 setValue('#add-amount', '12,50');
-$('.chip[data-id="c-food"]').click();
+$('#add-category').click();
+await wait(50);
+check('список категорий открылся', $('#sheet').open && $('.picker-row[data-id="c-food"]'));
+$('.picker-row[data-id="c-food"]').click();
+await wait(50);
+check('категория выбрана', $('#add-category-value').textContent === 'Еда');
 setValue('#add-note', '<img src=x onerror="window.__xss=1">');
 $('#add-submit').click();
 await wait(50);
@@ -45,7 +51,7 @@ check('заметка осталась текстом', $('#today-list').textCon
 check('сообщение об отмене показано', $('#toast-action')?.textContent === 'Отменить');
 
 const stored = JSON.parse(localStorage.getItem('daily-budget.state.v1'));
-check('данные сохранены', stored.transactions.length === 1 && stored.transactions[0].amount === 1250);
+check('данные сохранены', stored.transactions.length === 1 && stored.transactions[0].amount === 1250 && stored.version === 2);
 
 // Лист поверх экрана: <dialog>
 $('#wallet').click();
@@ -59,7 +65,9 @@ await wait(50);
 check('кошелёк закрылся', !$('#sheet').open);
 
 // Защита от неверного ввода и категории с невидимыми символами (регулярные выражения Unicode)
-$('#chip-add').click();
+$('#add-category').click();
+await wait(50);
+$('#picker-new').click();
 await wait(50);
 setValue('#cat-name', '​‮');
 $('#cat-save').click();
@@ -68,7 +76,7 @@ check('невидимое имя категории отклонено', $('#she
 setValue('#cat-name', 'Кафе');
 $('#cat-save').click();
 await wait(50);
-check('категория создана', !$('#sheet').open && $('.chip[aria-pressed="true"]')?.textContent === 'Кафе');
+check('категория создана', !$('#sheet').open && $('#add-category-value').textContent === 'Кафе');
 
 // Поле даты в WebKit
 const date = $('#add-date');
@@ -77,6 +85,16 @@ const dateRect = date.getBoundingClientRect();
 const formRect = $('#add-form').getBoundingClientRect();
 check('поле даты не вылезает за форму', dateRect.right <= formRect.right && dateRect.left >= formRect.left, `${dateRect.left}..${dateRect.right} / ${formRect.left}..${formRect.right}`);
 check('поле даты высотой от 44', dateRect.height >= 44, dateRect.height);
+
+// Кольцо расходов
+$('#tab-month').click();
+await wait(30);
+const ringSegment = document.querySelector('#month-ring .ring-segment');
+check('кольцо нарисовано', ringSegment && getComputedStyle(ringSegment).stroke !== 'none', ringSegment && getComputedStyle(ringSegment).stroke);
+const ringBox = $('#month-ring')?.getBoundingClientRect();
+check('кольцо в пределах экрана', ringBox && ringBox.width > 100 && ringBox.right <= innerWidth, JSON.stringify(ringBox));
+$('#tab-today').click();
+await wait(30);
 
 // Вёрстка на всех вкладках
 for (const tab of ['today', 'month', 'settings']) {

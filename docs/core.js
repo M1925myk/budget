@@ -2,7 +2,7 @@
 // поэтому каждую формулу можно проверить тестом.
 // Деньги везде хранятся в целых центах, чтобы не копить ошибки округления.
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 export const BACKUP_APP = 'daily-budget';
 export const MAX_CENTS = 10_000_000_000; // 100 млн €
 export const MAX_NOTE_LENGTH = 200;
@@ -111,9 +111,8 @@ export function formatMonth(ym) {
   return `${MONTHS_NOMINATIVE[month - 1]} ${year}`;
 }
 
-export function formatMonthGenitive(ym) {
-  const [year, month] = ym.split('-').map(Number);
-  return `${MONTHS_GENITIVE[month - 1]} ${year}`;
+export function formatFullDate(iso) {
+  return `${formatDay(iso)} ${iso.slice(0, 4)}`;
 }
 
 export function formatDay(iso) {
@@ -176,12 +175,21 @@ function assertBudgetCents(cents) {
   }
 }
 
-export function createInitialState(month, budgetCents) {
-  if (!isValidMonth(month)) throw new BudgetError('На телефоне неверная дата.');
+/** Дата начала учёта: любой день текущего месяца, но не позже сегодня. */
+export function validateStartDate(date, today) {
+  if (!isValidDate(today)) throw new BudgetError('На телефоне неверная дата.');
+  if (!isValidDate(date)) throw new BudgetError('Выбери дату.');
+  if (monthOf(date) !== monthOf(today)) throw new BudgetError('Выбери дату в текущем месяце.');
+  if (date > today) throw new BudgetError('Дата начала не может быть в будущем.');
+}
+
+export function createInitialState(startDate, budgetCents) {
+  if (!isValidDate(startDate)) throw new BudgetError('На телефоне неверная дата.');
   assertBudgetCents(budgetCents);
   return {
     version: SCHEMA_VERSION,
-    budgets: { [month]: budgetCents },
+    startDate,
+    budgets: { [monthOf(startDate)]: budgetCents },
     categories: DEFAULT_CATEGORIES.map((category) => ({ ...category })),
     transactions: [],
     lastBackupAt: null,
@@ -189,7 +197,23 @@ export function createInitialState(month, budgetCents) {
 }
 
 export function startMonth(state) {
-  return Object.keys(state.budgets).sort()[0];
+  return monthOf(state.startDate);
+}
+
+/**
+ * Меняет дату начала, пока идёт первый месяц учёта. Траты раньше новой даты выпали бы
+ * из расчёта, поэтому такая дата отклоняется.
+ */
+export function setStartDate(state, date, today) {
+  validateStartDate(date, today);
+  if (monthOf(today) !== startMonth(state)) {
+    throw new BudgetError('Дату начала можно менять только в первый месяц учёта.');
+  }
+  const earliest = state.transactions.reduce((first, t) => (t.date < first ? t.date : first), date);
+  if (earliest < date) {
+    throw new BudgetError(`Есть трата за ${formatDay(earliest)}. Дату начала нельзя поставить позже неё.`);
+  }
+  return { ...state, startDate: date };
 }
 
 /** Сумма месяца: своя или ближайшая предыдущая (новый месяц наследует прошлую сумму). */
@@ -225,8 +249,8 @@ function normalizeTransactionInput(state, { date, amount, categoryId, note }, to
   if (!isValidDate(date)) throw new BudgetError('Выбери дату.');
   // Уже записанную будущую дату (смена часового пояса, импорт) можно оставить при правке суммы.
   if (date > today && date !== existingDate) throw new BudgetError('Дата не может быть в будущем.');
-  if (monthOf(date) < startMonth(state)) {
-    throw new BudgetError(`Учёт начат с ${formatMonthGenitive(startMonth(state))}. Более ранние траты записать нельзя.`);
+  if (date < state.startDate) {
+    throw new BudgetError(`Учёт начат с ${formatFullDate(state.startDate)}. Более ранние траты записать нельзя.`);
   }
   if (!Number.isInteger(amount) || amount <= 0 || amount > MAX_CENTS) {
     throw new BudgetError('Неверная сумма.');
@@ -355,8 +379,14 @@ function spentByMonth(state) {
   return totals;
 }
 
+/** Дни месяца, на которые делится бюджет: в первый месяц только с даты начала. */
+function planFor(state, ym) {
+  const first = ym === startMonth(state) ? dayOf(state.startDate) : 1;
+  return { first, count: daysInMonth(ym) - first + 1 };
+}
+
 /** Сколько набежало к концу дня day: последний день месяца всегда даёт весь бюджет ровно. */
-const accrued = (budget, day, days) => Math.round((budget * day) / days);
+const accrued = (budget, day, plan) => (day < plan.first ? 0 : Math.round((budget * (day - plan.first + 1)) / plan.count));
 
 /** Остаток (+) или долг (−), пришедший из прошлых месяцев. */
 export function carryInto(state, ym) {
@@ -370,15 +400,17 @@ export function carryInto(state, ym) {
 
 /**
  * Главная формула:
- * доступно сегодня = перенос + бюджет × (номер дня / дней в месяце) − всё потраченное по сегодня.
+ * доступно сегодня = перенос + бюджет × (прошло дней учёта / дней учёта в месяце) − всё потраченное по сегодня.
+ * Обычно дней учёта столько же, сколько дней в месяце; в первый месяц они считаются с даты начала.
  */
 export function dayView(state, today) {
   const month = monthOf(today);
-  if (month < startMonth(state)) {
-    return { beforeStart: true, date: today, month, startMonth: startMonth(state) };
+  if (today < state.startDate) {
+    return { beforeStart: true, date: today, month, startDate: state.startDate };
   }
   const day = dayOf(today);
-  const days = daysInMonth(month);
+  const plan = planFor(state, month);
+  const days = plan.count;
   const budget = budgetFor(state, month);
   const carry = carryInto(state, month);
   let spentToday = 0;
@@ -390,7 +422,7 @@ export function dayView(state, today) {
     if (t.date <= today) spentToDate += t.amount;
     if (t.date === today) spentToday += t.amount;
   }
-  const availableToday = carry + accrued(budget, day, days) - spentToDate;
+  const availableToday = carry + accrued(budget, day, plan) - spentToDate;
   return {
     beforeStart: false,
     date: today,
@@ -425,9 +457,9 @@ export function recoveryDate(state, today) {
     date = addDays(date, 1);
     const month = monthOf(date);
     const day = dayOf(date);
-    const days = daysInMonth(month);
+    const plan = planFor(state, month);
     const budget = budgetFor(state, month);
-    balance += accrued(budget, day, days) - accrued(budget, day - 1, days);
+    balance += accrued(budget, day, plan) - accrued(budget, day - 1, plan);
     balance -= laterSpending.get(date) ?? 0;
     if (balance > 0) return date;
   }
@@ -468,7 +500,7 @@ export function monthView(state, ym) {
   const beforeStart = ym < startMonth(state);
   const budget = beforeStart ? 0 : budgetFor(state, ym);
   const carry = beforeStart ? 0 : carryInto(state, ym);
-  const days = daysInMonth(ym);
+  const days = beforeStart ? daysInMonth(ym) : planFor(state, ym).count;
   return {
     month: ym,
     days,
@@ -528,7 +560,7 @@ export function validateState(raw) {
     throw new BudgetError(`Данные повреждены: ${detail}.`);
   };
   if (!isPlainObject(raw)) fail('ожидался объект');
-  if (raw.version !== SCHEMA_VERSION) {
+  if (raw.version !== SCHEMA_VERSION && raw.version !== 1) {
     if (Number.isInteger(raw.version) && raw.version > SCHEMA_VERSION) {
       throw new BudgetError('Данные созданы более новой версией приложения. Обнови приложение.');
     }
@@ -544,6 +576,11 @@ export function validateState(raw) {
   }
   const firstMonth = Object.keys(budgets).sort()[0];
   if (!firstMonth) fail('нет ни одного бюджета');
+
+  // В версии 1 даты начала не было: расчёт всегда шёл с 1-го числа первого месяца.
+  const startDate = raw.version === 1 ? `${firstMonth}-01` : raw.startDate;
+  if (!isValidDate(startDate)) fail('неверная дата начала');
+  if (monthOf(startDate) !== firstMonth) fail('дата начала не совпадает с первым бюджетом');
 
   if (!Array.isArray(raw.categories)) fail('нет списка категорий');
   if (raw.categories.length > MAX_CATEGORIES) fail('слишком много категорий');
@@ -569,7 +606,7 @@ export function validateState(raw) {
     if (transactionIds.has(t.id)) fail('повторяется трата');
     transactionIds.add(t.id);
     if (!isValidDate(t.date)) fail('неверная дата траты');
-    if (monthOf(t.date) < firstMonth) fail('трата раньше начала учёта');
+    if (t.date < startDate) fail('трата раньше начала учёта');
     if (!isCentsInRange(t.amount, 1)) fail('неверная сумма траты');
     if (t.categoryId !== null && !categoryIds.has(t.categoryId)) fail('трата ссылается на несуществующую категорию');
     if (typeof t.note !== 'string' || t.note.length > MAX_NOTE_LENGTH) fail('неверная заметка');
@@ -580,7 +617,7 @@ export function validateState(raw) {
   const lastBackupAt = raw.lastBackupAt;
   if (lastBackupAt !== null && !isValidTimestamp(lastBackupAt)) fail('неверная дата резервной копии');
 
-  return { version: SCHEMA_VERSION, budgets, categories, transactions, lastBackupAt };
+  return { version: SCHEMA_VERSION, startDate, budgets, categories, transactions, lastBackupAt };
 }
 
 export function serializeBackup(state, nowMs) {

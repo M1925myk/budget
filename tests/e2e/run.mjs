@@ -72,15 +72,29 @@ async function freshPage(iso = '2026-11-02', { viewport } = {}) {
   return page;
 }
 
+/** Большинство сценариев считает с 1-го числа: так проще проверять числа. Дата начала проверяется отдельно. */
 async function start(page, budget = '660') {
   await page.type('#onb-amount', budget);
+  await page.setValue('#onb-date', await page.evaluate(`(() => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-01'; })()`));
   await page.click('#onb-submit');
   await page.waitFor(`Boolean(document.querySelector('#hero-amount'))`);
 }
 
+async function chooseCategory(page, id) {
+  await page.click('#add-category');
+  await page.click(`.picker-row[data-id="${id}"]`);
+  await page.waitFor(`!document.getElementById('sheet').open`);
+}
+
+async function newCategory(page, name) {
+  await page.click('#add-category');
+  await page.click('#picker-new');
+  await page.type('#cat-name', name);
+}
+
 async function addSpend(page, amount, { note, category, date } = {}) {
   await page.type('#add-amount', amount);
-  if (category) await page.click(`.chip[data-id="${category}"]`);
+  if (category) await chooseCategory(page, category);
   if (note) await page.type('#add-note', note);
   if (date) await page.setValue('#add-date', date);
   await page.click('#add-submit');
@@ -138,9 +152,10 @@ await scenario('первый запуск: сумма, расчёт, сохра�
   assert.match(await page.text('.field-error'), /неверно/);
 
   await page.type('#onb-amount', '660');
-  assert.match(money(await page.text('#onb-preview')), /22,00 € в день/);
-  assert.match(money(await page.text('#onb-preview')), /44,00 €/, 'второй день месяца: считаем с первого');
+  assert.match(money(await page.text('#onb-preview')), /22,76 € в день · с 2 ноября, 29 дней/, 'по умолчанию считаем с сегодня');
   await shot(page, '02-onboarding-filled');
+  await page.setValue('#onb-date', '2026-11-01');
+  assert.match(money(await page.text('#onb-preview')), /22,00 € в день · с 1 ноября, 30 дней/);
   await page.click('#onb-submit');
   await page.waitFor(`Boolean(document.querySelector('#hero-amount'))`);
 
@@ -227,6 +242,7 @@ await scenario('перерасход: красный минус и дата во
   await addSpend(page, '100');
   assert.equal(await hero(page), '−78,00 €');
   assert.equal(await page.evaluate(`document.getElementById('hero').classList.contains('is-negative')`), true);
+  assert.equal(await page.text('#hero-label'), 'Остаток');
   assert.match(await page.text('#hero-caption'), /Перерасход/);
   assert.match(await page.text('#hero-caption'), /5 ноября/);
   await shot(page, '05-overspend');
@@ -257,11 +273,118 @@ await scenario('смена месяца: остаток и долг перехо
   assert.equal(await wallet(debt), '630,00 €');
 });
 
-await scenario('старт с середины месяца', async () => {
+await scenario('старт с середины месяца: сумма делится с выбранной даты', async () => {
   const page = await freshPage('2026-11-15');
-  await start(page);
-  assert.equal(await hero(page), '330,00 €');
+  await page.type('#onb-amount', '660');
+  await page.click('#onb-submit');
+  await page.waitFor(`Boolean(document.querySelector('#hero-amount'))`);
+  assert.equal(await hero(page), '41,25 €', '16 дней, а не 330 € за прошедшие');
   assert.equal(await wallet(page), '660,00 €');
+  assert.equal((await stored(page)).startDate, '2026-11-15');
+  await page.type('#add-amount', '5');
+  await page.setValue('#add-date', '2026-11-14');
+  await page.click('#add-submit');
+  assert.match(await page.text('#add-form'), /с 15 ноября 2026/);
+
+  // Неверная дата на первом экране
+  const other = await freshPage('2026-11-15');
+  await other.type('#onb-amount', '660');
+  await other.setValue('#onb-date', '2026-11-20');
+  await other.click('#onb-submit');
+  assert.match(await other.text('#onb-form'), /в будущем/);
+  await other.setValue('#onb-date', '2026-10-20');
+  await other.click('#onb-submit');
+  assert.match(await other.text('#onb-form'), /в текущем месяце/);
+  await other.setValue('#onb-date', '2026-11-03');
+  await other.click('#onb-submit');
+  await other.waitFor(`Boolean(document.querySelector('#hero-amount'))`);
+  assert.equal(await hero(other), '306,43 €', '660 / 28 дней × 13');
+});
+
+await scenario('данные с телефона (версия 1): настройка «Считать с» туда и обратно', async () => {
+  const page = await freshPage('2026-11-03');
+  await page.evaluate(`localStorage.setItem('${STORAGE_KEY}', JSON.stringify({
+    version: 1,
+    budgets: { '2026-11': 56000 },
+    categories: [{ id: 'c-food', name: 'Еда' }, { id: 'c-transport', name: 'Транспорт' }, { id: 'x', name: 'Табак' }],
+    transactions: [{ id: 't', date: '2026-11-03', amount: 630, categoryId: 'x', note: 'Стики', createdAt: 1 }],
+    lastBackupAt: null,
+  }))`);
+  await page.navigate(URL_APP);
+  assert.equal(await hero(page), '49,70 €', 'как сейчас на телефоне');
+  assert.equal(await wallet(page), '553,70 €');
+  assert.match(await page.text('#today-list'), /Табак · Стики/);
+  await shot(page, '03-today-migrated');
+
+  await page.click('#tab-settings');
+  assert.equal(await page.text('#settings-start-value'), '1 ноября');
+  await page.click('#settings-start');
+  await page.setValue('#start-date', '2026-11-03');
+  assert.match(money(await page.text('#start-helper')), /28 дней по 20,00 €\. Остаток на сегодня: 13,70 €/);
+  await page.click('#start-save');
+  assert.equal(await page.text('#settings-start-value'), '3 ноября');
+  await page.click('#tab-today');
+  assert.equal(await hero(page), '13,70 €');
+  assert.equal(await wallet(page), '553,70 €');
+
+  await page.click('#tab-settings');
+  await page.click('#settings-start');
+  await page.setValue('#start-date', '2026-11-01');
+  await page.click('#start-save');
+  await page.click('#tab-today');
+  assert.equal(await hero(page), '49,70 €', 'можно вернуть как было');
+  await page.navigate(URL_APP);
+  assert.equal(await hero(page), '49,70 €');
+  await noErrors(page);
+});
+
+await scenario('дату начала нельзя поставить позже записанной траты; в следующем месяце настройки нет', async () => {
+  const page = await freshPage('2026-11-05');
+  await start(page);
+  await addSpend(page, '5', { date: '2026-11-02' });
+  await page.click('#tab-settings');
+  await page.click('#settings-start');
+  await page.setValue('#start-date', '2026-11-04');
+  assert.match(await page.text('#sheet'), /трата за 2 ноября/);
+  await page.click('#start-save');
+  assert.equal((await stored(page)).startDate, '2026-11-01');
+  await page.click('#sheet-close');
+  await setClock(page, '2026-12-05');
+  await page.navigate(URL_APP);
+  await page.click('#tab-settings');
+  assert.equal(await page.exists('#settings-start'), false);
+  await noErrors(page);
+});
+
+await scenario('кольцо расходов: доли, цвета закреплены за категорией, пустой месяц', async () => {
+  const page = await freshPage('2026-11-03');
+  await start(page);
+  await page.click('#tab-month');
+  assert.equal(await page.exists('#month-ring'), false, 'нет трат — нет кольца');
+  await page.click('#tab-today');
+  await addSpend(page, '30', { category: 'c-food' });
+  await addSpend(page, '10', { category: 'c-transport' });
+  await addSpend(page, '10');
+  await page.click('#tab-month');
+  const ring = await page.evaluate(`(() => {
+    const segments = [...document.querySelectorAll('#month-ring .ring-segment')];
+    return {
+      count: segments.length,
+      classes: segments.map((n) => n.getAttribute('class')),
+      stroke: getComputedStyle(segments[0]).stroke,
+      label: document.getElementById('month-ring').getAttribute('aria-label'),
+      total: document.querySelector('.ring-total').textContent,
+    };
+  })()`);
+  assert.equal(ring.count, 3);
+  assert.deepEqual([...ring.classes].sort(), ['ring-segment series-1', 'ring-segment series-2', 'ring-segment series-other']);
+  assert.equal(ring.classes[0], 'ring-segment series-1', 'самая большая доля первой');
+  assert.notEqual(ring.stroke, 'none');
+  assert.match(money(ring.label), /Потрачено 50,00 €: Еда 60 %/);
+  assert.equal(money(ring.total), '50,00 €');
+  assert.match(money(await page.text('#month-categories')), /Еда30,00 € · 60 %/);
+  await shot(page, '11-month');
+  await noErrors(page);
 });
 
 await scenario('день меняется, пока приложение открыто', async () => {
@@ -375,18 +498,19 @@ await scenario('категории: своя, переименование, уд
   const page = await freshPage('2026-11-03');
   await start(page);
 
-  await page.click('#chip-add');
-  await page.type('#cat-name', 'Кафе');
+  await page.click('#add-category');
   await shot(page, '10-category');
+  await page.click('#picker-new');
+  await page.type('#cat-name', 'Кафе');
   await page.click('#cat-save');
-  const created = await page.evaluate(`document.querySelector('.chip[aria-pressed="true"]').dataset.id`);
-  assert.equal(await page.text(`.chip[data-id="${created}"]`), 'Кафе', 'новая категория сразу выбрана');
+  await page.waitFor(`!document.getElementById('sheet').open`);
+  assert.equal(await page.text('#add-category-value'), 'Кафе', 'новая категория сразу выбрана');
+  const created = (await stored(page)).categories.at(-1).id;
   await page.type('#add-amount', '15');
   await page.click('#add-submit');
   assert.match(await page.text('#today-list'), /Кафе/);
 
-  await page.click('#chip-add');
-  await page.type('#cat-name', 'кафе');
+  await newCategory(page, 'кафе');
   await page.click('#cat-save');
   assert.match(await page.text('#sheet'), /уже есть/);
   await page.click('#sheet-close');
@@ -533,8 +657,7 @@ await scenario('код в заметке и названии категории 
     "'; window.__xss=4; //",
   ];
   for (const note of payloads) await addSpend(page, '1', { note });
-  await page.click('#chip-add');
-  await page.type('#cat-name', '<b onclick=x>Ж</b>');
+  await newCategory(page, '<b onclick=x>Ж</b>');
   await page.click('#cat-save');
   await page.waitFor(`!document.getElementById('sheet').open`);
   await page.click('#tab-month');
@@ -688,7 +811,7 @@ await scenario('дата телефона раньше начала учёта',
   await page.navigate(URL_APP);
   assert.ok(await page.visible('#date-notice'));
   assert.match(await page.text('#date-notice'), /раньше начала учёта/);
-  assert.match(await page.text('#date-notice'), /с ноября 2026/);
+  assert.match(await page.text('#date-notice'), /с 1 ноября 2026/);
   assert.equal(await wallet(page), '—');
   await shot(page, '16-before-start');
   await page.click('#wallet');
@@ -721,7 +844,7 @@ await scenario('форма записи видна над клавиатурой
   const hasSafeArea = await page.evaluate(`getComputedStyle(document.querySelector('.screen')).paddingTop !== '10px'`);
   const offset = hasSafeArea ? 0 : SAFE_TOP;
   const assertAboveKeyboard = async (label) => {
-    const bottoms = await page.evaluate(`Object.fromEntries(['add-amount', 'add-submit', 'add-chips', 'add-note', 'add-date'].map((id) => [id, Math.round(document.getElementById(id).getBoundingClientRect().bottom)]))`);
+    const bottoms = await page.evaluate(`Object.fromEntries(['add-amount', 'add-submit', 'add-category', 'add-note', 'add-date'].map((id) => [id, Math.round(document.getElementById(id).getBoundingClientRect().bottom)]))`);
     for (const [id, bottom] of Object.entries(bottoms)) {
       assert.ok(bottom + offset <= VISIBLE_WITH_KEYBOARD, `${label}: ${id} заканчивается на ${bottom + offset} pt при видимых ${VISIBLE_WITH_KEYBOARD} pt`);
     }
@@ -839,9 +962,9 @@ await scenario('двойное нажатие на строку не удаля�
 await scenario('первый запуск после смены месяца и после полуночи', async () => {
   const page = await freshPage('2026-11-30');
   await page.type('#onb-amount', '660');
-  assert.match(money(await page.text('#onb-preview')), /ноябрь 2026/);
+  assert.match(money(await page.text('#onb-preview')), /с 30 ноября/);
   await page.evaluate(`window.__setNow(${noon('2026-12-01')}); document.dispatchEvent(new Event('visibilitychange'))`);
-  assert.match(money(await page.text('#onb-preview')), /декабрь 2026/, 'подсказка обновилась');
+  assert.match(money(await page.text('#onb-preview')), /с 1 декабря, 31 день/, 'подсказка обновилась');
   await page.click('#onb-submit');
   await page.waitFor(`Boolean(document.querySelector('#hero-amount'))`);
   assert.deepEqual((await stored(page)).budgets, { '2026-12': 66000 });
@@ -947,10 +1070,9 @@ await scenario('импорт: будущая трата, странная дат
 await scenario('фокус не теряется', async () => {
   const page = await freshPage('2027-01-03');
   await start(page);
-  await page.evaluate(`document.querySelector('.chip[data-id="c-food"]').focus()`);
-  await page.click('.chip[data-id="c-food"]');
-  assert.equal(await page.evaluate(`document.activeElement.dataset.id`), 'c-food', 'на категории');
-  assert.equal(await page.text('.chip[aria-pressed="true"]'), 'Еда');
+  await chooseCategory(page, 'c-food');
+  assert.equal(await page.text('#add-category-value'), 'Еда');
+  assert.notEqual(await page.evaluate('document.activeElement.tagName'), 'BODY', 'после выбора категории');
 
   await page.click('#wallet');
   assert.equal(await page.evaluate('document.activeElement.id'), 'sheet-title', 'на заголовке листа');
@@ -968,18 +1090,6 @@ await scenario('фокус не теряется', async () => {
   assert.equal(await page.evaluate('document.activeElement.id'), 'month-prev', 'на листании');
   await page.click('#month-prev');
   assert.equal(await page.evaluate('document.activeElement.id'), 'month-title', 'кнопка стала недоступна');
-});
-
-await scenario('категория из одной буквы удобна для нажатия, кнопка добавления подписана', async () => {
-  const page = await freshPage('2026-11-03');
-  await start(page);
-  await page.click('#chip-add');
-  await page.type('#cat-name', 'Я');
-  await page.click('#cat-save');
-  await page.waitFor(`!document.getElementById('sheet').open`);
-  const width = await page.evaluate(`document.querySelector('.chip[aria-pressed="true"]').getBoundingClientRect().width`);
-  assert.ok(width >= 44, `ширина ${width}`);
-  assert.equal(await page.evaluate(`document.getElementById('chip-add').getAttribute('aria-label')`), 'Новая категория');
 });
 
 await scenario('лист закрывается нажатием мимо него, и изменения не применяются', async () => {
@@ -1322,13 +1432,12 @@ await scenario('приложение в корне домена не подме�
 await scenario('категория с невидимым символом внутри буквы не ломает запуск и копию', async () => {
   const page = await freshPage('2026-11-03');
   await start(page);
-  await page.click('#chip-add');
-  await page.type('#cat-name', 'Чаи­̆');
+  await newCategory(page, 'Чаи\u00AD\u0306');
   await page.click('#cat-save');
   await page.waitFor(`!document.getElementById('sheet').open`);
   await page.navigate(URL_APP);
   assert.equal(await page.exists('#corrupt-screen'), false, 'данные читаются после перезапуска');
-  assert.ok((await page.text('#add-chips')).includes('Чай'));
+  assert.ok((await stored(page)).categories.some((c) => c.name === 'Чай'));
   await noErrors(page);
 });
 

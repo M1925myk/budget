@@ -24,7 +24,7 @@ import {
   formatDayNear,
   formatMoney,
   formatMonth,
-  formatMonthGenitive,
+  formatFullDate,
   futureTransactionCount,
   isValidDate,
   isValidMonth,
@@ -39,9 +39,11 @@ import {
   renameCategory,
   serializeBackup,
   setBudget,
+  setStartDate,
   startMonth,
   transactionsOn,
   updateTransaction,
+  validateStartDate,
   validateState,
   weekdayShort,
 } from '../docs/core.js';
@@ -57,7 +59,7 @@ const spend = (state, date, amount, extra = {}) =>
 const eur = (euros) => Math.round(euros * 100);
 
 describe('примеры из обсуждения', () => {
-  const november = () => createInitialState('2026-11', eur(660));
+  const november = () => createInitialState('2026-11-01', eur(660));
 
   test('660 € / 30 дней = 22 € в первый день', () => {
     const view = dayView(november(), '2026-11-01');
@@ -94,14 +96,14 @@ describe('примеры из обсуждения', () => {
     const december = setBudget(state, '2026-12', eur(660), '2026-12');
     // В декабре 31 день, поэтому возьмём 30-дневный месяц для точного примера из обсуждения.
     assert.equal(carryInto(december, '2026-12'), eur(50));
-    const fromApril = spend(createInitialState('2027-03', eur(660)), '2027-03-31', eur(610));
+    const fromApril = spend(createInitialState('2027-03-01', eur(660)), '2027-03-31', eur(610));
     const april = setBudget(fromApril, '2027-04', eur(660), '2027-04');
     assert.equal(dayView(april, '2027-04-01').availableToday, eur(72));
     assert.equal(dayView(april, '2027-04-01').remainingMonth, eur(710));
   });
 
   test('долг 30 € переносится на первый день: −8 €, на месяц 630 €', () => {
-    const state = spend(createInitialState('2027-03', eur(660)), '2027-03-31', eur(690));
+    const state = spend(createInitialState('2027-03-01', eur(660)), '2027-03-31', eur(690));
     const april = setBudget(state, '2027-04', eur(660), '2027-04');
     assert.equal(dayView(april, '2027-04-01').availableToday, eur(-8));
     assert.equal(dayView(april, '2027-04-01').remainingMonth, eur(630));
@@ -113,6 +115,94 @@ describe('примеры из обсуждения', () => {
     const after = dayView(changed, '2026-11-20').availableToday;
     assert.equal(after - before, 9333);
   });
+});
+
+describe('дата начала учёта', () => {
+  test('сумма делится с выбранной даты до конца месяца', () => {
+    const state = createInitialState('2026-11-03', eur(560));
+    const view = dayView(state, '2026-11-03');
+    assert.equal(view.days, 28);
+    assert.equal(view.normDay, eur(20));
+    assert.equal(view.availableToday, eur(20));
+    assert.equal(view.remainingMonth, eur(560));
+    assert.equal(dayView(state, '2026-11-04').availableToday, eur(40));
+    assert.equal(dayView(state, '2026-11-30').availableToday, eur(560));
+  });
+
+  test('15 ноября: 660 € на 16 дней, а не 330 € сразу', () => {
+    assert.equal(dayView(createInitialState('2026-11-15', eur(660)), '2026-11-15').availableToday, 4125);
+  });
+
+  test('со следующего месяца бюджет делится на все дни', () => {
+    const state = createInitialState('2026-11-03', eur(560));
+    const december = dayView(state, '2026-12-01');
+    assert.equal(december.days, 31);
+    assert.equal(december.carry, eur(560));
+    assert.equal(december.normDay, Math.round(56000 / 31));
+  });
+
+  test('день раньше начала учёта', () => {
+    const state = createInitialState('2026-11-15', eur(660));
+    assert.equal(dayView(state, '2026-11-14').beforeStart, true);
+    assert.equal(dayView(state, '2026-11-14').startDate, '2026-11-15');
+  });
+
+  test('траты раньше даты начала не записываются', () => {
+    const state = createInitialState('2026-11-15', eur(660));
+    const fields = { id: 'a', createdAt: 1, amount: 100, categoryId: null, note: '' };
+    assert.throws(() => addTransaction(state, { ...fields, date: '2026-11-14' }, '2026-11-20'), /с 15 ноября 2026/);
+    assert.equal(addTransaction(state, { ...fields, date: '2026-11-15' }, '2026-11-20').transactions.length, 1);
+  });
+
+  test('данные версии 1 читаются как раньше, с 1-го числа, и не теряются', () => {
+    const v1 = {
+      version: 1,
+      budgets: { '2026-11': eur(560) },
+      categories: [{ id: 'c-food', name: 'Еда' }, { id: 'x', name: 'Табак' }],
+      transactions: [{ id: 't', date: '2026-11-03', amount: 630, categoryId: 'x', note: 'Стики', createdAt: 5 }],
+      lastBackupAt: null,
+    };
+    const state = validateState(v1);
+    assert.equal(state.version, 2);
+    assert.equal(state.startDate, '2026-11-01');
+    assert.deepEqual(state.transactions, v1.transactions);
+    assert.deepEqual(state.categories, v1.categories);
+    assert.equal(dayView(state, '2026-11-03').availableToday, 4970, 'как на экране: 49,70 €');
+    assert.equal(dayView(state, '2026-11-03').remainingMonth, 55370, 'как на экране: 553,70 €');
+
+    const fromThird = setStartDate(state, '2026-11-03', '2026-11-03');
+    assert.equal(dayView(fromThird, '2026-11-03').availableToday, 1370, 'с 3 ноября: 13,70 €');
+    assert.equal(dayView(setStartDate(fromThird, '2026-11-01', '2026-11-03'), '2026-11-03').availableToday, 4970, 'назад на 1-е: 49,70 €');
+    assert.deepEqual(validateState(JSON.parse(JSON.stringify(fromThird))), fromThird);
+  });
+
+  test('копия версии 1 восстанавливается', () => {
+    const backup = JSON.stringify({ app: 'daily-budget', exportedAt: 5, data: { version: 1, budgets: { '2026-11': 100 }, categories: [], transactions: [], lastBackupAt: null } });
+    assert.equal(parseBackup(backup).state.startDate, '2026-11-01');
+  });
+
+  test('какую дату начала выбрать нельзя', () => {
+    const state = addTransaction(createInitialState('2026-11-01', eur(560)), { id: 'a', createdAt: 1, date: '2026-11-02', amount: 1, categoryId: null, note: '' }, '2026-11-05');
+    assert.throws(() => setStartDate(state, '2026-11-03', '2026-11-05'), /трата за 2 ноября/);
+    assert.equal(setStartDate(state, '2026-11-02', '2026-11-05').startDate, '2026-11-02');
+    assert.throws(() => setStartDate(state, '2026-11-06', '2026-11-05'), /будущем/);
+    assert.throws(() => setStartDate(state, '', '2026-11-05'), /Выбери дату/);
+    assert.throws(() => validateStartDate('2026-10-31', '2026-11-05'), /текущем месяце/);
+    assert.throws(() => setStartDate(state, '2026-12-01', '2026-12-05'), /первый месяц/);
+  });
+
+  for (const [name, change] of [
+    ['нет даты начала', (s) => { delete s.startDate; }],
+    ['неверная дата начала', (s) => { s.startDate = '2026-02-30'; }],
+    ['дата начала в другом месяце', (s) => { s.startDate = '2026-10-31'; }],
+    ['трата раньше даты начала', (s) => { s.transactions.push({ id: 'z', date: '2026-11-02', amount: 1, categoryId: null, note: '', createdAt: 1 }); }],
+  ]) {
+    test(`отклоняется: ${name}`, () => {
+      const raw = JSON.parse(JSON.stringify(createInitialState('2026-11-03', eur(1))));
+      change(raw);
+      assert.throws(() => validateState(raw), BudgetError);
+    });
+  }
 });
 
 describe('даты', () => {
@@ -152,7 +242,7 @@ describe('даты', () => {
   test('русские названия', () => {
     assert.equal(formatMonth('2026-11'), 'ноябрь 2026');
     assert.equal(formatDay('2026-11-02'), '2 ноября');
-    assert.equal(formatMonthGenitive('2026-11'), 'ноября 2026');
+    assert.equal(formatFullDate('2026-11-03'), '3 ноября 2026');
     assert.equal(formatDayNear('2026-11-05', '2026-11-01'), '5 ноября');
     assert.equal(formatDayNear('2027-11-04', '2026-11-05'), '4 ноября 2027');
     assert.equal(weekdayShort('2026-11-02'), 'пн');
@@ -220,7 +310,7 @@ describe('разбор и вывод денег', () => {
 
 describe('расчёт лимита', () => {
   test('месяц без ровного деления: последний день даёт весь бюджет без потери центов', () => {
-    const state = createInitialState('2026-12', eur(660));
+    const state = createInitialState('2026-12-01', eur(660));
     assert.equal(dayView(state, '2026-12-01').availableToday, 2129);
     assert.equal(dayView(state, '2026-12-02').availableToday, 4258);
     assert.equal(dayView(state, '2026-12-31').availableToday, eur(660));
@@ -228,16 +318,16 @@ describe('расчёт лимита', () => {
   });
 
   test('февраль: 28 и 29 дней', () => {
-    const regular = createInitialState('2027-02', eur(280));
+    const regular = createInitialState('2027-02-01', eur(280));
     assert.equal(dayView(regular, '2027-02-01').availableToday, eur(10));
     assert.equal(dayView(regular, '2027-02-28').availableToday, eur(280));
-    const leap = createInitialState('2028-02', eur(290));
+    const leap = createInitialState('2028-02-01', eur(290));
     assert.equal(dayView(leap, '2028-02-01').availableToday, eur(10));
     assert.equal(dayView(leap, '2028-02-29').availableToday, eur(290));
   });
 
   test('бюджет наследуется, пока его не изменят', () => {
-    let state = createInitialState('2026-11', eur(660));
+    let state = createInitialState('2026-11-01', eur(660));
     assert.equal(budgetFor(state, '2026-12'), eur(660));
     assert.equal(budgetFor(state, '2027-06'), eur(660));
     state = setBudget(state, '2026-12', eur(500), '2026-12');
@@ -247,7 +337,7 @@ describe('расчёт лимита', () => {
   });
 
   test('правка прошлого месяца не меняет следующие унаследованные суммы', () => {
-    let state = createInitialState('2026-09', eur(660));
+    let state = createInitialState('2026-09-01', eur(660));
     state = setBudget(state, '2026-09', eur(500), '2026-11');
     assert.equal(budgetFor(state, '2026-09'), eur(500));
     assert.equal(budgetFor(state, '2026-10'), eur(660));
@@ -256,50 +346,50 @@ describe('расчёт лимита', () => {
   });
 
   test('правка текущего месяца наследуется дальше', () => {
-    const state = setBudget(createInitialState('2026-11', eur(660)), '2026-11', eur(800), '2026-11');
+    const state = setBudget(createInitialState('2026-11-01', eur(660)), '2026-11', eur(800), '2026-11');
     assert.equal(budgetFor(state, '2026-12'), eur(800));
   });
 
   test('правка месяца после текущего не меняет суммы следующих', () => {
-    const state = setBudget(createInitialState('2026-11', eur(660)), '2026-12', eur(100), '2026-11');
+    const state = setBudget(createInitialState('2026-11-01', eur(660)), '2026-12', eur(100), '2026-11');
     assert.equal(budgetFor(state, '2026-12'), eur(100));
     assert.equal(budgetFor(state, '2027-01'), eur(660));
     assert.equal(budgetFor(state, '2026-11'), eur(660));
   });
 
   test('правка последнего допустимого месяца не создаёт недопустимый следующий', () => {
-    const state = setBudget(createInitialState('2100-11', eur(660)), '2100-12', eur(100), '2100-11');
+    const state = setBudget(createInitialState('2100-11-01', eur(660)), '2100-12', eur(100), '2100-11');
     assert.deepEqual(Object.keys(state.budgets).sort(), ['2100-11', '2100-12']);
     assert.doesNotThrow(() => validateState(JSON.parse(JSON.stringify(state))));
   });
 
   test('нельзя поставить бюджет раньше начала учёта', () => {
-    const state = createInitialState('2026-11', eur(660));
+    const state = createInitialState('2026-11-01', eur(660));
     assert.throws(() => setBudget(state, '2026-10', eur(1), '2026-11'), BudgetError);
   });
 
   test('ноль в бюджете допустим и не ломает деление', () => {
-    const state = spend(createInitialState('2026-11', 0), '2026-11-01', eur(5));
+    const state = spend(createInitialState('2026-11-01', 0), '2026-11-01', eur(5));
     assert.equal(dayView(state, '2026-11-01').availableToday, eur(-5));
     assert.equal(dayView(state, '2026-11-30').availableToday, eur(-5));
     assert.equal(recoveryDate(state, '2026-11-01'), null);
   });
 
   test('дата раньше начала учёта не роняет расчёт', () => {
-    const state = createInitialState('2026-11', eur(660));
+    const state = createInitialState('2026-11-01', eur(660));
     const view = dayView(state, '2026-10-15');
     assert.equal(view.beforeStart, true);
-    assert.equal(view.startMonth, '2026-11');
+    assert.equal(view.startDate, '2026-11-01');
   });
 
   test('запись задним числом сразу уменьшает сегодняшний лимит', () => {
-    const state = spend(createInitialState('2026-11', eur(660)), '2026-11-01', eur(7));
+    const state = spend(createInitialState('2026-11-01', eur(660)), '2026-11-01', eur(7));
     assert.equal(dayView(state, '2026-11-03').availableToday, eur(66 - 7));
     assert.equal(dayView(state, '2026-11-03').spentToday, 0);
   });
 
   test('трата в будущем (после перевода часов) не влияет на сегодня, но видна в месяце', () => {
-    const state = spend(createInitialState('2026-11', eur(660)), '2026-11-20', eur(100));
+    const state = spend(createInitialState('2026-11-01', eur(660)), '2026-11-20', eur(100));
     const view = dayView(state, '2026-11-02');
     assert.equal(view.availableToday, eur(44));
     assert.equal(view.remainingMonth, eur(560));
@@ -307,20 +397,20 @@ describe('расчёт лимита', () => {
   });
 
   test('последний месяц истории не бывает раньше начала учёта', () => {
-    const state = createInitialState('2026-11', eur(660));
+    const state = createInitialState('2026-11-01', eur(660));
     assert.equal(latestMonth(state, '2026-10'), '2026-11');
     assert.equal(latestMonth(state, '2026-12'), '2026-12');
   });
 
   test('восстановление лимита учитывает смену месяца', () => {
-    const state = spend(createInitialState('2026-11', eur(30)), '2026-11-30', eur(40));
+    const state = spend(createInitialState('2026-11-01', eur(30)), '2026-11-30', eur(40));
     // Долг 10 €, в декабре норма 30/31 €: лимит станет положительным на 11-й день.
     assert.equal(recoveryDate(state, '2026-11-30'), '2026-12-11');
   });
 
   test('восстановление не считается, если лимит не в минусе', () => {
-    assert.equal(recoveryDate(createInitialState('2026-11', eur(660)), '2026-11-01'), null);
-    const zero = spend(createInitialState('2026-11', eur(30)), '2026-11-01', eur(1));
+    assert.equal(recoveryDate(createInitialState('2026-11-01', eur(660)), '2026-11-01'), null);
+    const zero = spend(createInitialState('2026-11-01', eur(30)), '2026-11-01', eur(1));
     assert.equal(dayView(zero, '2026-11-01').availableToday, 0);
     assert.equal(recoveryDate(zero, '2026-11-01'), null);
   });
@@ -340,7 +430,9 @@ describe('случайные проверки против независимо�
     test(`seed ${seed}`, () => {
       const rnd = makeRandom(seed);
       const first = `20${20 + rnd(10)}-${String(1 + rnd(12)).padStart(2, '0')}`;
-      let state = createInitialState(first, rnd(200000));
+      const startDay = seed % 2 === 0 ? 1 : 1 + rnd(daysInMonth(first));
+      const startDate = `${first}-${String(startDay).padStart(2, '0')}`;
+      let state = createInitialState(startDate, rnd(200000));
       const monthCount = 1 + rnd(14);
       const months = [first];
       for (let i = 1; i < monthCount; i += 1) {
@@ -352,7 +444,8 @@ describe('случайные проверки против независимо�
       const txCount = rnd(80);
       for (let i = 0; i < txCount; i += 1) {
         const m = months[rnd(months.length)];
-        const date = `${m}-${String(1 + rnd(daysInMonth(m))).padStart(2, '0')}`;
+        const low = m === first ? startDay : 1;
+        const date = `${m}-${String(low + rnd(daysInMonth(m) - low + 1)).padStart(2, '0')}`;
         const amount = 1 + rnd(90000);
         state = spend(state, date, amount);
         spentOn.set(date, (spentOn.get(date) ?? 0) + amount);
@@ -365,9 +458,10 @@ describe('случайные проверки против независимо�
         const budget = budgetFor(state, m);
         let given = 0;
         let monthSpent = 0;
-        for (let day = 1; day <= days; day += 1) {
+        const firstDay = m === first ? startDay : 1;
+        for (let day = firstDay; day <= days; day += 1) {
           const date = `${m}-${String(day).padStart(2, '0')}`;
-          const target = Math.round((budget * day) / days);
+          const target = Math.round((budget * (day - firstDay + 1)) / (days - firstDay + 1));
           balance += target - given;
           given = target;
           const todaySpent = spentOn.get(date) ?? 0;
@@ -387,7 +481,7 @@ describe('случайные проверки против независимо�
       }
 
       // Дата восстановления совпадает с прямым перебором дней.
-      const probe = `${months[0]}-01`;
+      const probe = startDate;
       const expected = (() => {
         if (dayView(state, probe).availableToday >= 0) return null;
         let date = probe;
@@ -403,7 +497,7 @@ describe('случайные проверки против независимо�
 });
 
 describe('траты', () => {
-  const base = () => createInitialState('2026-11', eur(660));
+  const base = () => createInitialState('2026-11-01', eur(660));
   const fields = (over = {}) => ({ id: 'x', createdAt: 1, date: '2026-11-02', amount: 100, categoryId: null, note: '', ...over });
 
   test('запрещены будущая дата, дата до начала учёта, плохая сумма и несуществующая категория', () => {
@@ -471,7 +565,7 @@ describe('траты', () => {
 });
 
 describe('категории', () => {
-  const base = () => createInitialState('2026-11', eur(660));
+  const base = () => createInitialState('2026-11-01', eur(660));
   const base2 = base;
 
   test('стартовые категории', () => {
@@ -582,7 +676,7 @@ describe('категории', () => {
 
 describe('проверка данных', () => {
   const valid = () => {
-    let state = createInitialState('2026-11', eur(660));
+    let state = createInitialState('2026-11-01', eur(660));
     state = spend(state, '2026-11-01', eur(10), { id: 'fixed', createdAt: 1, categoryId: 'c-food', note: 'обед' });
     return JSON.parse(JSON.stringify(state));
   };
@@ -646,7 +740,7 @@ describe('проверка данных', () => {
 
   test('данные новой версии отклоняются с понятным сообщением', () => {
     const raw = valid();
-    raw.version = 2;
+    raw.version = 3;
     assert.throws(() => validateState(raw), /более новой версией/);
   });
 
@@ -658,7 +752,7 @@ describe('проверка данных', () => {
 });
 
 describe('резервная копия', () => {
-  const state = () => spend(createInitialState('2026-11', eur(660)), '2026-11-01', eur(10), { note: '<img src=x onerror=alert(1)>' });
+  const state = () => spend(createInitialState('2026-11-01', eur(660)), '2026-11-01', eur(10), { note: '<img src=x onerror=alert(1)>' });
 
   test('копия читается обратно без потерь', () => {
     const original = state();
@@ -685,7 +779,7 @@ describe('резервная копия', () => {
 
   test('напоминание о копии', () => {
     const day = 86_400_000;
-    const empty = createInitialState('2026-11', 100);
+    const empty = createInitialState('2026-11-01', 100);
     assert.equal(backupReminderDue(empty, 100 * day), false);
     const withTx = addTransaction(empty, { id: 'a', createdAt: day, date: '2026-11-01', amount: 1, categoryId: null, note: '' }, '2026-11-01');
     assert.equal(backupReminderDue(withTx, 30 * day), false);

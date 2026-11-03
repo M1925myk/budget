@@ -1,18 +1,18 @@
 // Хранит файлы приложения на телефоне, чтобы оно открывалось без интернета.
 // Никаких данных не читает и не отправляет. VERSION и FILES обновляет tools/stamp-version.mjs.
-const VERSION = 'bdb10b40b227';
+const VERSION = 'f92887ed96c7';
 const FILES = {
-  './app.js': '8b16f6efd3411f0e7a318d60a0c03b67687248ef621b38d9068b988002f0adc7',
+  './app.js': '3754631c9dc9c81ad285d4ddebedddad078cdedf5bcd1dce743bb2c7bc3a1a82',
   './boot.js': '289fa20900f6319677092e70ae29ef3e0ad2cf67230d847d1c2daafc876585e5',
-  './core.js': '057f66b03d39733d4869d0934fe1368fdb67babb47a0812eaa67ac26de70e972',
+  './core.js': '9bd8b02867d20af8737ef98a1450e06a6ef7f6b7fe57a5e3d0a1fa027a505958',
   './icons/icon-180.png': '2cd2d9c670776f39a2f43185368cc26b031f09aeb8478d5a6f5be8a330f4d350',
   './icons/icon-192.png': '931cb82c7949a0ef45ccc2a9ff51ef8b6ebc31bf59b6eb25f9038bf1c5998c3c',
   './icons/icon-512.png': '87814d75c82dd810a9a6f4123d75920b70ee85e46e6699df80aae966ea5ba0b5',
   './icons/icon-maskable-512.png': '5031b6e0505e175db0159ba26c747a7cdf008c6d8311b6616470fdea17fc5cca',
   './icons/splash-1290x2796.png': '10dfbd0c19e072d91bdfdcf0c2b83336ff55dc9a0f14591bb00643700b139bb4',
-  './index.html': 'e4cda06c3236cb6ce41224763e758fe1a46bf977597347282858a1e31f189d52',
+  './index.html': 'f953d590c4cd1969914e0879050947253a4e7b10777d267bc7fea7a69b59db81',
   './manifest.webmanifest': '166672c8f64b546c3928775fedc3fbb8eeda2222b0bf21ef40ccfc6827d898a5',
-  './styles.css': '921ad3e654bc3df7929a1c205f7a9392e079129384c9f5f8f442565df9f68006',
+  './styles.css': '52ee4c10ef9a7f900c225a67dacc570bf142eb5069f1dd22459665afdbb4ed83',
 };
 
 // Версия ставится только целиком: каждый файл сверяется с контрольной суммой. Если хостинг отдал

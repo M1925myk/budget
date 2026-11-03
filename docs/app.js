@@ -20,9 +20,9 @@ import {
   deleteTransaction,
   formatDay,
   formatDayNear,
+  formatFullDate,
   formatMoney,
   formatMonth,
-  formatMonthGenitive,
   futureTransactionCount,
   latestMonth,
   localDateISO,
@@ -37,9 +37,11 @@ import {
   renameCategory,
   serializeBackup,
   setBudget,
+  setStartDate,
   startMonth,
   transactionsOn,
   updateTransaction,
+  validateStartDate,
   validateState,
   weekdayShort,
 } from './core.js';
@@ -414,36 +416,46 @@ function showOnboarding() {
   const { input, wrap } = moneyInput({ id: 'onb-amount' });
   const error = fieldError();
   const preview = el('div', { class: 'preview', id: 'onb-preview', 'aria-live': 'polite' });
+  const date = el('input', { class: 'input', id: 'onb-date', type: 'date' });
+  let dateTouched = false;
+  const chosenDate = (today) => (dateTouched ? date.value : today);
 
   const updatePreview = () => {
     error.clear(input);
     preview.replaceChildren();
     const today = todayISO();
-    const month = monthOf(today);
+    date.max = today;
+    date.min = `${monthOf(today)}-01`;
+    if (!dateTouched) date.value = today;
     let cents;
     let view;
     try {
       cents = parseMoney(input.value);
-      view = dayView(createInitialState(month, cents), today);
+      validateStartDate(chosenDate(today), today);
+      view = dayView(createInitialState(chosenDate(today), cents), today);
     } catch (problem) {
       if (!(problem instanceof BudgetError)) throw problem;
-      return; // Пока человек печатает, неполная сумма не ошибка. Неверную дату покажет кнопка «Начать».
+      return; // Пока человек печатает, неполная сумма не ошибка. Остальное покажет кнопка «Начать».
     }
     if (cents === 0) return;
-    preview.append(el('span', {}, el('strong', { text: formatMoney(view.normDay) }), ` в день · ${formatMonth(month)}, ${view.days} ${pluralRu(view.days, 'день', 'дня', 'дней')}`));
-    if (view.day > 1) {
-      preview.append(el('span', {}, 'Сегодня уже доступно ', el('strong', { text: formatMoney(view.availableToday) }), `: считаем с 1-го числа.`));
-    }
+    preview.append(el('span', {},
+      el('strong', { text: formatMoney(view.normDay) }),
+      ` в день · с ${formatDay(chosenDate(today))}, ${view.days} ${pluralRu(view.days, 'день', 'дня', 'дней')}`));
   };
   input.addEventListener('input', updatePreview);
+  date.addEventListener('change', () => {
+    dateTouched = date.value !== todayISO();
+    updatePreview();
+  });
 
   const onSubmit = (event) => {
     event.preventDefault();
     attempt(() => {
       const cents = parseAmount(input.value);
-      // Месяц берётся в момент нажатия: экран мог быть открыт ещё со вчерашнего дня.
-      const created = createInitialState(monthOf(todayISO()), cents);
-      if (commit(created)) requestPersistentStorage();
+      // Дата берётся в момент нажатия: экран мог быть открыт ещё со вчерашнего дня.
+      const today = todayISO();
+      validateStartDate(chosenDate(today), today);
+      if (commit(createInitialState(chosenDate(today), cents))) requestPersistentStorage();
     }, (message) => error.show(message, input));
   };
 
@@ -451,8 +463,9 @@ function showOnboarding() {
     installNotice(),
     el('form', { class: 'onboarding', id: 'onb-form', noValidate: true, onSubmit },
       el('h1', { text: 'Сколько денег на месяц?' }),
-      el('p', { class: 'muted', text: 'Сумма разделится на дни месяца. Что не потратишь сегодня, прибавится к завтрашнему лимиту.' }),
-      textField('Сумма на месяц', wrap, error.node),
+      el('p', { class: 'muted', text: 'Сумма разделится на дни с выбранной даты до конца месяца. Что не потратишь сегодня, прибавится к завтрашнему лимиту.' }),
+      textField('Сумма', wrap, error.node),
+      textField('Считать с', date),
       preview,
       el('button', { type: 'submit', class: 'btn btn-primary', id: 'onb-submit', text: 'Начать' }),
       el('button', { type: 'button', class: 'btn btn-quiet', id: 'onb-restore', text: 'Восстановить из резервной копии', onClick: pickBackupFile }),
@@ -460,23 +473,24 @@ function showOnboarding() {
     importInput(),
   );
   onboardingRefresh = updatePreview;
+  updatePreview();
 }
 
 // ---------- Главный экран ----------
 
 function buildMain() {
-  const topbarDay = el('div', { class: 'topbar-day', id: 'topbar-day' });
-  const topbarWeekday = el('div', { class: 'topbar-weekday', id: 'topbar-weekday' });
+  const topbarDay = el('span', { class: 'topbar-day', id: 'topbar-day' });
+  const topbarWeekday = el('span', { class: 'topbar-weekday', id: 'topbar-weekday' });
   const walletAmount = el('span', { class: 'wallet-amount', id: 'wallet-amount' });
   const wallet = el('button', { type: 'button', class: 'wallet', id: 'wallet', onClick: openWalletSheet },
     icon('wallet'),
-    el('span', { class: 'wallet-text' }, el('span', { class: 'wallet-label', text: 'Осталось на месяц' }), walletAmount));
+    walletAmount);
 
   const heroAmount = el('div', { class: 'hero-amount', id: 'hero-amount' });
   const heroFill = el('span', { class: 'meter-fill' });
   const heroCaption = el('p', { class: 'hero-caption', id: 'hero-caption' });
   const hero = el('section', { class: 'hero', id: 'hero', 'aria-labelledby': 'hero-label' },
-    el('h1', { class: 'hero-label', id: 'hero-label', text: 'Осталось на сегодня', tabIndex: -1 }),
+    el('h1', { class: 'hero-label', id: 'hero-label', text: 'Остаток', tabIndex: -1 }),
     heroAmount,
     el('div', { class: 'meter', 'aria-hidden': 'true' }, heroFill),
     heroCaption);
@@ -486,21 +500,23 @@ function buildMain() {
   // Форма добавления собирается один раз, поэтому обновление экрана не стирает ввод.
   const { input: amount, wrap: amountWrap } = moneyInput({ id: 'add-amount' });
   const formError = fieldError();
-  const chips = el('div', { class: 'chips', id: 'add-chips', role: 'group', 'aria-label': 'Категория' });
-  const note = el('input', { class: 'input', id: 'add-note', type: 'text', maxLength: MAX_NOTE_LENGTH, placeholder: 'Куда потрачено', autocomplete: 'off', enterKeyHint: 'done' });
-  const date = el('input', { class: 'input', id: 'add-date', type: 'date' });
+  const categoryValue = el('span', { class: 'form-row-value', id: 'add-category-value' });
+  const categoryButton = el('button', { type: 'button', class: 'form-row', id: 'add-category', onClick: openCategoryPicker },
+    el('span', { class: 'form-row-label', text: 'Категория' }),
+    el('span', { class: 'form-row-end' }, categoryValue, icon('right')));
+  const note = el('input', { class: 'form-row-input', id: 'add-note', type: 'text', maxLength: MAX_NOTE_LENGTH, placeholder: 'Куда потрачено', autocomplete: 'off', enterKeyHint: 'done' });
+  const date = el('input', { class: 'form-row-input', id: 'add-date', type: 'date' });
   // Кнопка и сообщение об ошибке стоят рядом с суммой: так они не уходят под клавиатуру iPhone.
   const form = el('form', { class: 'card', id: 'add-form', noValidate: true, 'aria-label': 'Новая трата', onSubmit: onAddSubmit },
-    el('div', { class: 'field' },
-      el('label', { class: 'field-label', htmlFor: 'add-amount', text: 'Сумма' }),
+    el('div', { class: 'add-amount' },
+      el('label', { class: 'sr-only', htmlFor: 'add-amount', text: 'Сумма' }),
       el('div', { class: 'amount-row' },
         amountWrap,
         el('button', { type: 'submit', class: 'btn btn-primary', id: 'add-submit', text: 'Записать' })),
       formError.node),
-    chips,
-    el('div', { class: 'field-row' },
-      textField('Заметка', note),
-      textField('Дата', date)));
+    categoryButton,
+    el('label', { class: 'form-row' }, el('span', { class: 'form-row-label', text: 'Заметка' }), note),
+    el('label', { class: 'form-row' }, el('span', { class: 'form-row-label', text: 'Дата' }), date));
 
   amount.addEventListener('input', () => formError.clear(amount));
   date.addEventListener('change', () => {
@@ -509,7 +525,7 @@ function buildMain() {
   });
 
   const reminderSlot = el('div', { id: 'backup-reminder-slot' });
-  const todayListTitle = el('h2', { class: 'section-title', text: 'Траты за сегодня' });
+  const todayListTitle = el('h2', { class: 'section-title', text: 'Сегодня' });
   const todayTotal = el('span', { class: 'amount muted', id: 'today-total' });
   const todayList = el('div', { id: 'today-list' });
 
@@ -520,8 +536,7 @@ function buildMain() {
     reminderSlot,
     el('section', { class: 'section' },
       el('div', { class: 'section-head' }, todayListTitle, todayTotal),
-      todayList),
-    el('p', { class: 'footnote', text: 'Сэкономленное сегодня прибавится к лимиту завтра, а перерасход уменьшит лимит следующих дней.' }));
+      todayList));
 
   const panelMonth = el('div', { class: 'panel', id: 'panel-month', hidden: true });
   const panelSettings = el('div', { class: 'panel', id: 'panel-settings', hidden: true });
@@ -531,7 +546,7 @@ function buildMain() {
   appRoot.replaceChildren(el('div', { class: 'screen' },
     installNotice({ compact: true }),
     updateSlot,
-    el('header', { class: 'topbar' }, el('div', { class: 'topbar-date' }, topbarDay, topbarWeekday), wallet),
+    el('header', { class: 'topbar' }, el('div', { class: 'topbar-date' }, topbarDay, ', ', topbarWeekday), wallet),
     panelToday,
     panelMonth,
     panelSettings,
@@ -541,11 +556,10 @@ function buildMain() {
   main = {
     topbarDay, topbarWeekday, wallet, walletAmount,
     hero, heroAmount, heroFill, heroCaption, dateNotice,
-    amount, formError, chips, note, date,
+    amount, formError, categoryValue, note, date,
     reminderSlot, updateSlot, todayTotal, todayList,
     panelToday, panelMonth, panelSettings,
     selectedCategory: null,
-    chipsKey: null,
     dateTouched: false,
     lastSavedAt: 0,
   };
@@ -602,7 +616,7 @@ function renderTopbar(view) {
   }
   walletAmount.textContent = formatMoney(view.remainingMonth);
   wallet.classList.toggle('is-negative', view.remainingMonth < 0);
-  wallet.setAttribute('aria-label', `Кошелёк. Осталось на месяц ${formatMoney(view.remainingMonth)}, на сегодня ${formatMoney(view.availableToday)}`);
+  wallet.setAttribute('aria-label', `Кошелёк. Осталось на месяц ${formatMoney(view.remainingMonth)}, остаток на сегодня ${formatMoney(view.availableToday)}`);
 }
 
 function renderHero(view) {
@@ -612,7 +626,7 @@ function renderHero(view) {
   if (view.beforeStart) {
     dateNotice.replaceChildren(
       el('strong', { text: 'Дата на телефоне раньше начала учёта' }),
-      el('span', { text: `Учёт начат с ${formatMonthGenitive(view.startMonth)}, а на телефоне ${formatDay(view.date)} ${view.date.slice(0, 4)}. Проверь дату в настройках iPhone.` }));
+      el('span', { text: `Учёт начат с ${formatFullDate(view.startDate)}, а на телефоне ${formatFullDate(view.date)}. Проверь дату в настройках iPhone.` }));
     return;
   }
 
@@ -643,53 +657,50 @@ function renderHero(view) {
   }
 }
 
-function syncChipSelection() {
-  main.chips.querySelectorAll('.chip[data-id]').forEach((chip) => {
-    chip.setAttribute('aria-pressed', String(chip.dataset.id === main.selectedCategory));
-  });
+function renderCategoryButton() {
+  const selected = state.categories.find((c) => c.id === main.selectedCategory);
+  if (!selected) main.selectedCategory = null;
+  main.categoryValue.textContent = selected ? selected.name : 'Выбрать';
+  main.categoryValue.classList.toggle('is-chosen', Boolean(selected));
 }
 
-function renderChips() {
-  const { chips } = main;
-  if (main.selectedCategory !== null && !state.categories.some((c) => c.id === main.selectedCategory)) {
-    main.selectedCategory = null;
-  }
-  // Кнопки пересоздаются только при изменении категорий, иначе теряются фокус и прокрутка.
-  const key = JSON.stringify(state.categories);
-  if (key !== main.chipsKey) {
-    main.chipsKey = key;
-    const scroll = chips.scrollLeft;
-    chips.replaceChildren(
-      ...state.categories.map((category) => el('button', {
-        type: 'button',
-        class: 'chip',
-        'data-id': category.id,
-        onClick: () => {
-          main.selectedCategory = main.selectedCategory === category.id ? null : category.id;
-          syncChipSelection();
-        },
-      }, el('span', { class: 'chip-label', text: category.name }))),
-      el('button', {
-        type: 'button',
-        class: 'chip chip-add',
-        id: 'chip-add',
-        'aria-label': 'Новая категория',
-        onClick: () => openCategorySheet(null, (created) => {
-          main.selectedCategory = created;
-          syncChipSelection();
-        }),
-      }, icon('plus'), el('span', { text: 'Категория' })),
-    );
-    chips.scrollLeft = scroll;
-  }
-  syncChipSelection();
+function openCategoryPicker() {
+  const choose = (id) => {
+    main.selectedCategory = id;
+    renderCategoryButton();
+    closeSheet();
+  };
+  const row = (id, name) => el('button', {
+    type: 'button',
+    class: 'row picker-row',
+    'data-id': id ?? undefined,
+    id: id === null ? 'picker-none' : undefined,
+    'aria-pressed': String(main.selectedCategory === id),
+    onClick: () => choose(id),
+  },
+    el('span', { class: 'row-title', text: name }),
+    main.selectedCategory === id ? el('span', { class: 'picker-check' }, icon('check')) : null);
+
+  openSheet('Категория',
+    el('div', { class: 'list', id: 'picker-list' },
+      state.categories.map((category) => row(category.id, category.name)),
+      row(null, UNCATEGORIZED)),
+    el('button', {
+      type: 'button',
+      class: 'btn',
+      id: 'picker-new',
+      onClick: () => openCategorySheet(null, (created) => {
+        main.selectedCategory = created;
+        renderCategoryButton();
+      }),
+    }, icon('plus'), 'Новая категория'));
 }
 
 function renderDateField() {
   const today = todayISO();
   const { date } = main;
   date.max = today;
-  date.min = `${startMonth(state)}-01`;
+  date.min = state.startDate;
   if (!main.dateTouched) date.value = today;
 }
 
@@ -703,7 +714,7 @@ function transactionRow(transaction) {
   },
     el('span', { class: 'row-main' },
       el('span', { class: 'row-title', text: category ? category.name : UNCATEGORIZED }),
-      transaction.note ? el('span', { class: 'row-sub', text: transaction.note }) : null),
+      transaction.note ? el('span', { class: 'row-sub', text: ` · ${transaction.note}` }) : null),
     el('span', { class: 'row-amount', text: formatMoney(transaction.amount) }));
 }
 
@@ -790,16 +801,12 @@ function renderMonth() {
 
   const categories = view.categories.length
     ? el('section', { class: 'section' },
-      el('h2', { class: 'section-title', text: 'По категориям' }),
-      el('div', { class: 'list', id: 'month-categories' }, view.categories.map((category) => {
-        const fill = el('span', { class: 'cat-bar-fill' });
-        setFill(fill, category.share);
-        return el('div', { class: 'cat-row' },
-          el('div', { class: 'cat-line' },
-            el('span', { class: 'cat-name', text: category.name }),
-            el('span', { class: 'amount', text: `${formatMoney(category.amount)} · ${Math.round(category.share * 100)} %` })),
-          el('div', { class: 'cat-bar', 'aria-hidden': 'true' }, fill));
-      })))
+      el('h2', { class: 'section-title', text: 'Куда ушло' }),
+      spendingRing(view),
+      el('div', { class: 'list', id: 'month-categories' }, view.categories.map((category) => el('div', { class: 'cat-row' },
+        el('span', { class: `series-dot ${seriesClass(category.categoryId)}`, 'aria-hidden': 'true' }),
+        el('span', { class: 'cat-name', text: category.name }),
+        el('span', { class: 'amount', text: `${formatMoney(category.amount)} · ${Math.round(category.share * 100)}\u00A0%` })))))
     : null;
 
   const history = el('section', { class: 'section', id: 'month-history' },
@@ -822,6 +829,51 @@ function renderMonth() {
   }
 }
 
+const SERIES_COUNT = 8;
+
+/** Цвет закреплён за категорией, а не за её местом по сумме. После восьмой и «Без категории» — серый. */
+function seriesClass(categoryId) {
+  const index = state.categories.findIndex((c) => c.id === categoryId);
+  return index >= 0 && index < SERIES_COUNT ? `series-${index + 1}` : 'series-other';
+}
+
+function svgEl(tag, attributes) {
+  const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, String(value));
+  return node;
+}
+
+/** Кольцо расходов. Подписи и суммы — в списке под ним, цвет не единственный носитель смысла. */
+function spendingRing(view) {
+  const radius = 48;
+  const circumference = 2 * Math.PI * radius;
+  const gap = view.categories.length > 1 ? 2 : 0;
+  const svg = svgEl('svg', { viewBox: '0 0 120 120', class: 'ring-svg', 'aria-hidden': 'true' });
+  const group = svgEl('g', { transform: 'rotate(-90 60 60)' });
+  let offset = 0;
+  for (const category of view.categories) {
+    const length = category.share * circumference;
+    group.append(svgEl('circle', {
+      cx: 60,
+      cy: 60,
+      r: radius,
+      fill: 'none',
+      'stroke-width': 14,
+      class: `ring-segment ${seriesClass(category.categoryId)}`,
+      'stroke-dasharray': `${Math.max(length - gap, 0.5)} ${circumference}`,
+      'stroke-dashoffset': -offset,
+    }));
+    offset += length;
+  }
+  svg.append(group);
+  const summary = view.categories.map((c) => `${c.name} ${Math.round(c.share * 100)} %`).join(', ');
+  return el('div', { class: 'ring', id: 'month-ring', role: 'img', 'aria-label': `Потрачено ${formatMoney(view.spent)}: ${summary}` },
+    svg,
+    el('div', { class: 'ring-center' },
+      el('span', { class: 'ring-label', text: 'Потрачено' }),
+      el('span', { class: 'ring-total', text: formatMoney(view.spent) })));
+}
+
 function summaryRow(title, cents, signed = false, id = undefined) {
   const prefix = signed && cents > 0 ? '+' : '';
   return el('div', { class: `row${cents < 0 ? ' is-negative' : ''}`, id },
@@ -832,7 +884,7 @@ function summaryRow(title, cents, signed = false, id = undefined) {
 function renderSettings() {
   const today = todayISO();
   const month = monthOf(today);
-  const showBudgetRow = month >= startMonth(state);
+  const showBudgetRow = today >= state.startDate;
 
   const categoryRows = state.categories.map((category) => {
     const used = categoryUsage(state, category.id);
@@ -864,7 +916,12 @@ function renderSettings() {
         el('div', { class: 'list' },
           el('button', { type: 'button', class: 'row', id: 'settings-budget', onClick: () => openBudgetSheet(month) },
             el('span', { class: 'row-title', text: 'Сумма на месяц' }),
-            el('span', { class: 'row-amount', text: formatMoney(dayView(state, today).budget) }))))
+            el('span', { class: 'row-amount', text: formatMoney(dayView(state, today).budget) })),
+          month === startMonth(state)
+            ? el('button', { type: 'button', class: 'row', id: 'settings-start', onClick: openStartDateSheet },
+              el('span', { class: 'row-title', text: 'Считать с' }),
+              el('span', { class: 'row-amount', id: 'settings-start-value', text: formatDay(state.startDate) }))
+            : null))
       : null,
 
     el('section', { class: 'section' },
@@ -957,7 +1014,7 @@ function render() {
 
   if (activeTab === 'today') {
     renderHero(view);
-    renderChips();
+    renderCategoryButton();
     renderDateField();
     renderNotices();
     renderTodayList(view);
@@ -988,7 +1045,7 @@ function openWalletSheet() {
   const today = todayISO();
   const view = dayView(state, today);
   if (view.beforeStart) {
-    openSheet('Кошелёк', el('p', { text: `Учёт начат с ${formatMonthGenitive(view.startMonth)}. Проверь дату в настройках iPhone.` }));
+    openSheet('Кошелёк', el('p', { text: `Учёт начат с ${formatFullDate(view.startDate)}. Проверь дату в настройках iPhone.` }));
     return;
   }
   const box = (label, cents, id) => el('div', { class: `wallet-box${cents < 0 ? ' is-negative' : ''}` },
@@ -1004,7 +1061,7 @@ function openWalletSheet() {
       summaryRow('Норма в день', view.normDay),
       summaryRow('Перенос с прошлого месяца', view.carry, true),
       summaryRow('Потрачено за месяц', view.spentMonth)),
-    el('p', { class: 'small muted', text: 'Это расчёт по записанным тратам, а не реальный баланс счёта.' }),
+    el('p', { class: 'small muted', text: 'Сэкономленное сегодня прибавится к лимиту завтра, а перерасход уменьшит лимит следующих дней. Это расчёт по записанным тратам, а не реальный баланс счёта.' }),
     el('button', { type: 'button', class: 'btn', id: 'wallet-budget', text: 'Изменить бюджет', onClick: () => openBudgetSheet(view.month) }));
 }
 
@@ -1021,7 +1078,7 @@ function openTransactionSheet(id) {
     state.categories.map((c) => el('option', { value: c.id, text: c.name })));
   category.value = transaction.categoryId ?? '';
   const note = el('input', { class: 'input', id: 'edit-note', type: 'text', maxLength: MAX_NOTE_LENGTH, value: transaction.note, placeholder: 'Куда потрачено', autocomplete: 'off', enterKeyHint: 'done' });
-  const date = el('input', { class: 'input', id: 'edit-date', type: 'date', value: transaction.date, max: todayISO(), min: `${startMonth(state)}-01` });
+  const date = el('input', { class: 'input', id: 'edit-date', type: 'date', value: transaction.date, max: todayISO(), min: state.startDate });
   const generalError = fieldError();
 
   const onSubmit = (event) => {
@@ -1062,6 +1119,43 @@ function openTransactionSheet(id) {
       el('div', { class: 'actions' },
         el('button', { type: 'submit', class: 'btn btn-primary', id: 'edit-save', text: 'Сохранить' }),
         el('button', { type: 'button', class: 'btn btn-danger', id: 'edit-delete', text: 'Удалить трату', onClick: onDelete }))));
+}
+
+function openStartDateSheet() {
+  const today = todayISO();
+  const input = el('input', { class: 'input', id: 'start-date', type: 'date', value: state.startDate, min: `${monthOf(today)}-01`, max: today });
+  const error = fieldError();
+  const helper = el('p', { class: 'helper', id: 'start-helper' });
+
+  const updateHelper = () => {
+    error.clear(input);
+    helper.textContent = '';
+    let view;
+    try {
+      view = dayView(setStartDate(state, input.value, todayISO()), todayISO());
+    } catch (problem) {
+      if (!(problem instanceof BudgetError)) throw problem;
+      error.show(problem.message);
+      return;
+    }
+    helper.textContent = `${view.days} ${pluralRu(view.days, 'день', 'дня', 'дней')} по ${formatMoney(view.normDay)}. Остаток на сегодня: ${formatMoney(view.availableToday)}.`;
+  };
+  input.addEventListener('change', updateHelper);
+
+  const onSubmit = (event) => {
+    event.preventDefault();
+    error.clear(input);
+    const next = attempt(() => setStartDate(state, input.value, todayISO()), (message) => error.show(message));
+    if (!next) return;
+    if (commit(next)) closeSheet();
+  };
+
+  openSheet('С какого числа считать',
+    el('form', { class: 'section', id: 'start-form', noValidate: true, onSubmit },
+      textField('Дата начала', input, error.node),
+      helper,
+      el('button', { type: 'submit', class: 'btn btn-primary', id: 'start-save', text: 'Сохранить' })));
+  updateHelper();
 }
 
 function openBudgetSheet(month) {
