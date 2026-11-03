@@ -1,0 +1,14 @@
+{
+  "name": "daily-budget",
+  "private": true,
+  "type": "module",
+  "description": "Динамический дневной бюджет: PWA для iPhone без сервера и без зависимостей.",
+  "scripts": {
+    "test": "node --test tests/core.test.mjs tests/static.test.mjs",
+    "e2e": "node tests/e2e/run.mjs",
+    "serve": "node tools/serve.mjs",
+    "icons": "node tools/make-icons.mjs",
+    "stamp": "node tools/stamp-version.mjs",
+    "webkit": "node tests/webkit/run.mjs"
+  }
+}

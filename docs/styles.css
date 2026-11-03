@@ -1,0 +1,573 @@
+:root {
+  color-scheme: dark;
+
+  --bg: #0b0d0c;
+  --surface: #161a18;
+  --surface-raised: #202523;
+  --line: #333b37;
+  --control-line: #6b756f;
+  --text: #f3f6f4;
+  --muted: #a8b2ad;
+  --accent: #c8f04d;
+  --on-accent: #10140a;
+  --danger: #ff8a7a;
+  --danger-surface: #2c1815;
+  --scrim: rgb(0 0 0 / 0.62);
+
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+
+  --radius-lg: 20px;
+  --radius: 14px;
+  --tap: 44px;
+  --tabbar: 56px;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+/* На iPhone корневой размер шрифта следует системной настройке размера текста.
+   -webkit-touch-callout есть только на iOS: на компьютере этот шрифт был бы слишком мелким. */
+html {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+  font-size: 100%;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+@supports (font: -apple-system-body) and (-webkit-touch-callout: none) {
+  html { font: -apple-system-body; }
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.45;
+  overflow-x: hidden;
+  overscroll-behavior-y: none;
+  -webkit-tap-highlight-color: transparent;
+}
+html:has(dialog[open]) { overflow: hidden; }
+
+h1, h2, h3, p { margin: 0; }
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; touch-action: manipulation; }
+[hidden] { display: none !important; }
+
+.sprite { position: absolute; }
+.icon {
+  width: 24px;
+  height: 24px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Заголовки получают фокус только программно, для экранного диктора. */
+[tabindex="-1"]:focus { outline: none; }
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.money, .amount { font-variant-numeric: tabular-nums; }
+
+/* ---------- Каркас ---------- */
+
+.screen {
+  width: 100%;
+  max-width: 560px;
+  margin-inline: auto;
+  padding: calc(var(--safe-top) + 10px) max(16px, var(--safe-right)) calc(var(--safe-bottom) + var(--tabbar) + 24px) max(16px, var(--safe-left));
+}
+.screen-plain { padding-bottom: calc(var(--safe-bottom) + 24px); }
+
+.screen > .notice { margin-bottom: 12px; }
+
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  min-height: 48px;
+}
+.topbar-date { min-width: 0; }
+.topbar-day { font-size: 1.0625rem; font-weight: 600; }
+.topbar-weekday { color: var(--muted); font-size: 0.875rem; }
+
+.wallet {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  min-width: 0;
+  padding: 4px 12px 4px 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  margin-left: auto;
+  text-align: right;
+  transition: background-color 120ms var(--ease);
+}
+.wallet:active { background: var(--surface-raised); }
+.wallet .icon { color: var(--accent); }
+.wallet-text { display: grid; min-width: 0; }
+.wallet-label { color: var(--muted); font-size: 0.75rem; line-height: 1.2; }
+.wallet-amount { font-size: 1.0625rem; font-weight: 650; line-height: 1.3; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.wallet.is-negative .wallet-amount, .wallet.is-negative .icon { color: var(--danger); }
+
+.panel { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; padding-top: 6px; }
+#backup-reminder-slot { display: grid; gap: 10px; }
+#backup-reminder-slot:empty { display: none; }
+#update-slot:not(:empty) { margin-bottom: 12px; }
+.section-title { font-size: 1.125rem; font-weight: 650; }
+.section { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.section-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 12px; }
+.muted { color: var(--muted); }
+.small { font-size: 0.875rem; }
+.footnote { color: var(--muted); font-size: 0.875rem; }
+
+/* ---------- Главное число ---------- */
+
+.hero { display: grid; gap: 4px; }
+.hero-label { color: var(--muted); font-size: 1rem; font-weight: 500; }
+.hero-amount {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  column-gap: 2px;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.hero-int { font-size: min(19vw, 5.25rem); }
+.hero-frac { font-size: min(8vw, 2.125rem); color: var(--muted); letter-spacing: -0.01em; font-weight: 600; }
+.hero-amount[data-size="m"] .hero-int { font-size: min(14vw, 3.75rem); }
+.hero-amount[data-size="s"] .hero-int { font-size: min(10vw, 2.75rem); }
+.hero-amount[data-size="s"] .hero-frac { font-size: min(6vw, 1.625rem); }
+.hero.is-negative .hero-int, .hero.is-negative .hero-frac { color: var(--danger); }
+
+.meter {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-raised);
+  overflow: hidden;
+}
+.meter-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transform: scaleX(var(--fill, 0));
+  transform-origin: left;
+  transition: transform 220ms var(--ease);
+}
+.hero.is-negative .meter-fill { background: var(--danger); }
+.hero-caption { color: var(--muted); font-size: 0.9375rem; }
+.hero.is-negative .hero-caption strong { color: var(--danger); font-weight: 600; }
+
+/* ---------- Формы ---------- */
+
+.card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+
+.field { display: grid; gap: 6px; min-width: 0; }
+.field-label { color: var(--muted); font-size: 0.875rem; font-weight: 500; }
+/* При крупном системном тексте поля и кнопка переносятся на отдельные строки. */
+.field-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.field-row > :first-child { flex: 2 1 9.5rem; min-width: min(100%, 9.5rem); }
+.field-row > :last-child { flex: 1 1 9.5rem; min-width: min(100%, 9.5rem); }
+.amount-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.amount-row .money-input { flex: 999 1 8rem; min-width: min(100%, 8rem); }
+.amount-row .btn { flex: 1 1 auto; width: auto; min-height: 60px; padding-inline: 18px; }
+
+.input, .select {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  padding: 10px 12px;
+  background: var(--surface-raised);
+  border: 1px solid var(--control-line);
+  border-radius: var(--radius);
+  /* Меньше 16px iPhone при фокусе увеличивает страницу. */
+  font-size: max(16px, 1rem);
+  transition: border-color 120ms var(--ease);
+}
+.input:focus, .select:focus { outline: none; border-color: var(--accent); }
+.input[aria-invalid="true"] { border-color: var(--danger); }
+.input::placeholder { color: var(--muted); opacity: 1; }
+input[type="date"].input { -webkit-appearance: none; appearance: none; text-align: left; }
+input[type="date"]::-webkit-date-and-time-value { text-align: left; }
+.select { -webkit-appearance: none; appearance: none; }
+
+.money-input { position: relative; display: block; }
+.money-input .input {
+  min-height: 60px;
+  padding-right: calc(14px + 1.1em);
+  font-size: clamp(28px, 1.75rem, 40px);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.money-input .input::placeholder { font-weight: 500; }
+.money-suffix {
+  position: absolute;
+  top: 50%;
+  right: 14px;
+  transform: translateY(-50%);
+  color: var(--muted);
+  font-size: min(1.375rem, 30px);
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.field-error {
+  color: var(--danger);
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+.field-error:empty, .sheet-alert:empty { position: absolute; padding: 0; border: 0; }
+.helper { color: var(--muted); font-size: 0.875rem; }
+
+.chips {
+  display: flex;
+  gap: 8px;
+  margin-inline: -12px;
+  padding-inline: 12px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.chips::-webkit-scrollbar { display: none; }
+.chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  max-width: 70vw;
+  min-width: var(--tap);
+  min-height: var(--tap);
+  padding: 0 14px;
+  background: var(--surface-raised);
+  border: 1px solid var(--control-line);
+  border-radius: 22px;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background-color 120ms var(--ease), color 120ms var(--ease);
+}
+.chip-label { overflow: hidden; text-overflow: ellipsis; }
+.chip[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  font-weight: 650;
+}
+.chip-add { color: var(--muted); border-style: dashed; padding-left: 10px; }
+.chip-add .icon { width: 18px; height: 18px; }
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 52px;
+  padding: 10px 16px;
+  background: var(--surface-raised);
+  border: 1px solid var(--control-line);
+  border-radius: var(--radius);
+  font-size: 1.0625rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  transition: opacity 120ms var(--ease), transform 120ms var(--ease);
+}
+.btn:active { opacity: 0.8; transform: scale(0.985); }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 700; }
+.btn-danger { background: var(--danger-surface); border-color: transparent; color: var(--danger); }
+.btn-quiet { background: transparent; border-color: transparent; color: var(--muted); font-weight: 500; }
+.btn-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr)); gap: 10px; }
+.actions { display: grid; gap: 10px; padding-top: 4px; }
+.link-btn {
+  min-height: var(--tap);
+  padding: 0 10px;
+  margin: -6px -10px;
+  background: none;
+  border: 0;
+  color: var(--accent);
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+/* ---------- Списки ---------- */
+
+.list {
+  display: grid;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  padding: 10px 14px;
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--line);
+  text-align: left;
+  transition: background-color 120ms var(--ease);
+}
+.list > .row:first-child { border-top: 0; }
+button.row:active { background: var(--surface-raised); }
+.row-main { display: grid; flex: 1 1 8rem; min-width: 0; }
+.row-title { font-weight: 500; overflow-wrap: anywhere; unicode-bidi: isolate; }
+.row-sub { color: var(--muted); font-size: 0.875rem; overflow-wrap: anywhere; unicode-bidi: isolate; }
+.row-amount { flex: none; max-width: 100%; margin-left: auto; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.row.is-negative .row-amount { color: var(--danger); }
+.row-action { flex: none; }
+
+.day-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0 12px; padding: 4px 2px 0; color: var(--muted); font-size: 0.875rem; font-weight: 500; }
+.day-head .amount { font-weight: 600; }
+
+.empty {
+  padding: 18px 16px;
+  color: var(--muted);
+  text-align: center;
+  background: var(--surface);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-lg);
+}
+
+.notice {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  font-size: 0.9375rem;
+}
+.notice-danger { border-color: var(--danger); }
+.notice strong { font-weight: 650; }
+.notice ol { margin: 0; padding-left: 1.25rem; }
+
+/* ---------- Месяц ---------- */
+
+.month-nav { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.month-title { font-size: 1.25rem; font-weight: 650; text-align: center; }
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--tap);
+  height: var(--tap);
+  flex: none;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  transition: background-color 120ms var(--ease);
+}
+.icon-btn:active { background: var(--surface-raised); }
+.icon-btn:disabled { opacity: 0.35; cursor: default; }
+
+.cat-row { display: grid; gap: 6px; padding: 12px 14px; border-top: 1px solid var(--line); }
+.list > .cat-row:first-child { border-top: 0; }
+.cat-line { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0 12px; }
+.cat-name { min-width: 0; overflow-wrap: anywhere; font-weight: 500; }
+.cat-bar { height: 4px; border-radius: 2px; background: var(--surface-raised); overflow: hidden; }
+.cat-bar-fill { display: block; height: 100%; background: var(--accent); transform: scaleX(var(--fill, 0)); transform-origin: left; }
+
+/* ---------- Первый запуск ---------- */
+
+.onboarding { display: grid; gap: 18px; padding-top: 28px; }
+.onboarding h1 { font-size: 2rem; font-weight: 700; line-height: 1.15; letter-spacing: -0.02em; }
+.preview { display: grid; gap: 2px; min-height: 3.2em; color: var(--muted); }
+.preview strong { color: var(--text); font-weight: 650; }
+
+/* ---------- Нижняя панель ---------- */
+
+.tabs {
+  position: fixed;
+  inset: auto 0 0;
+  z-index: 10;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: 0 var(--safe-right) var(--safe-bottom) var(--safe-left);
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+}
+.tab {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 2px;
+  min-height: var(--tabbar);
+  background: none;
+  border: 0;
+  color: var(--muted);
+  /* Как в системной панели вкладок: подписи не растут вместе с системным размером текста. */
+  font-size: min(0.75rem, 15px);
+  font-weight: 500;
+}
+.tab[aria-current="page"] { color: var(--accent); font-weight: 650; }
+
+/* ---------- Лист поверх экрана ----------
+   Открывается сверху: снизу его закрыла бы клавиатура iPhone. */
+
+.sheet {
+  width: min(100vw - 24px, 520px);
+  max-width: none;
+  max-height: calc(var(--viewport-height, 100dvh) - var(--safe-top) - 24px);
+  margin: calc(var(--safe-top) + 12px) auto auto;
+  padding: 0;
+  overflow: auto;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+.sheet::backdrop { background: var(--scrim); }
+.sheet[open] { animation: sheet-in 180ms var(--ease); }
+.sheet-body { display: grid; gap: 14px; padding: 12px 16px 16px; }
+.sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.sheet-title { font-size: 1.1875rem; font-weight: 650; outline: none; overflow-wrap: anywhere; min-width: 0; unicode-bidi: isolate; }
+.sheet-alert {
+  padding: 10px 12px;
+  background: var(--danger-surface);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  color: var(--danger);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.sheet-close { background: transparent; border: 0; margin-right: -10px; color: var(--muted); }
+.sheet .list { background: var(--surface-raised); }
+.sheet .list .row { border-top-color: var(--line); }
+.sheet .input, .sheet .select { background: var(--bg); }
+.sheet .btn:not(.btn-primary, .btn-danger, .btn-quiet) { background: var(--surface-raised); }
+
+.wallet-duo { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.wallet-box { display: grid; gap: 2px; padding: 12px; background: var(--surface-raised); border-radius: var(--radius); min-width: 0; }
+.wallet-box-label { color: var(--muted); font-size: 0.8125rem; }
+.wallet-box-amount { font-size: 1.3125rem; font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.wallet-box.is-negative .wallet-box-amount { color: var(--danger); }
+
+@keyframes sheet-in {
+  from { opacity: 0; transform: translateY(-12px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ---------- Уведомления ---------- */
+
+.toast {
+  position: fixed;
+  /* Внизу, над панелью вкладок и клавиатурой: сверху сообщение закрывало бы кошелёк и главное число. */
+  bottom: calc(max(var(--keyboard-inset, 0px), var(--safe-bottom) + var(--tabbar)) + 8px);
+  left: 50%;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: min(100vw - 24px, 520px);
+  min-height: 52px;
+  padding: 6px 8px 6px 16px;
+  background: var(--text);
+  color: var(--bg);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.45);
+  font-size: 0.9375rem;
+  font-weight: 550;
+  transform: translateX(-50%);
+  animation: toast-in 180ms var(--ease);
+}
+.toast-error { background: var(--danger); color: #1c0805; }
+.toast-text { overflow-wrap: anywhere; min-width: 0; padding-block: 6px; }
+.toast-action {
+  flex: none;
+  min-height: var(--tap);
+  padding: 0 12px;
+  background: none;
+  border: 0;
+  color: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+@keyframes toast-in {
+  from { opacity: 0; transform: translate(-50%, 8px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+.fatal {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 40;
+  padding: calc(var(--safe-top) + 10px) max(16px, var(--safe-right)) 12px max(16px, var(--safe-left));
+  background: var(--danger);
+  color: #1c0805;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.noscript { padding: 24px 16px; }
+
+/* ---------- Если приложение не запустилось ---------- */
+
+.start-failure {
+  display: grid;
+  gap: 14px;
+  max-width: 560px;
+  margin-inline: auto;
+  padding: calc(var(--safe-top) + 28px) max(16px, var(--safe-right)) 24px max(16px, var(--safe-left));
+}
+.start-failure h1 { font-size: 1.75rem; line-height: 1.15; font-weight: 700; }
+
+/* Работает даже без JavaScript: появляется, только если #app так и остался пустым. */
+.start-hint { display: none; }
+#app:empty ~ .start-hint {
+  display: block;
+  padding: calc(var(--safe-top) + 28px) 16px 24px;
+  color: var(--muted);
+  opacity: 0;
+  animation: start-hint-in 200ms 6s forwards;
+}
+#start-failure:not([hidden]) ~ #app:empty ~ .start-hint { display: none; }
+@keyframes start-hint-in { to { opacity: 1; } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
